@@ -1,5 +1,3 @@
-# submission-analysis-data-dicoding
-
 # Submission Analysis Data Dicoding
 
 This repository contains the project for Data Analysis using Python and Machine Learning, specifically designed for the Dicoding submission. The project involves data analysis, machine learning modeling, and visualization. It uses libraries such as Streamlit, Pandas, Matplotlib, Seaborn, and Plotly to create an interactive dashboard and generate useful insights.
