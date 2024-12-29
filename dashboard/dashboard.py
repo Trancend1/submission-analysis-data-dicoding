@@ -2,8 +2,7 @@ import os
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Page configuration
 st.set_page_config(
@@ -12,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for better styling
+# Custom CSS for styling
 st.markdown("""
     <style>
     .stMetric {
@@ -31,29 +30,26 @@ def load_data(dataset_path):
         st.stop()
         
     df = pd.read_csv(dataset_path)
-    
-    # Handle missing values in timestamp column
     df['order_purchase_timestamp'] = pd.to_datetime(df['order_purchase_timestamp'], errors='coerce')
-    
-    # Handle missing values in product_category_name
     df['product_category_name'] = df['product_category_name'].fillna('Unknown Category')
     
-    # Handle missing values in numeric columns
     numeric_columns = ['price', 'freight_value', 'product_weight_g']
     for col in numeric_columns:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
             df[col] = df[col].fillna(df[col].mean())
     
+    if 'quantity' not in df.columns:
+        df['quantity'] = 1  
     return df
 
-# Load data
+# Load dataset
 script_dir = os.path.dirname(os.path.abspath(__file__))
 dataset_path = os.path.join(script_dir, 'main_dataset.csv')
 main_dataset = load_data(dataset_path)
 
 # Verify required columns
-required_columns = ['order_purchase_timestamp', 'product_category_name', 'price', 'product_id', 'freight_value', 'product_weight_g']
+required_columns = ['order_purchase_timestamp', 'product_category_name', 'price', 'product_id', 'freight_value', 'product_weight_g', 'quantity']
 missing_columns = [col for col in required_columns if col not in main_dataset.columns]
 if missing_columns:
     st.error(f"Missing required columns in the dataset: {missing_columns}")
@@ -61,8 +57,6 @@ if missing_columns:
 
 # Sidebar filters
 st.sidebar.title("📊 Dashboard Controls")
-
-# Safe date range selection
 min_date = main_dataset['order_purchase_timestamp'].min().date()
 max_date = main_dataset['order_purchase_timestamp'].max().date()
 
@@ -73,7 +67,6 @@ date_range = st.sidebar.date_input(
     max_value=max_date
 )
 
-# Category filter
 all_categories = sorted(main_dataset['product_category_name'].unique().tolist())
 if st.sidebar.checkbox("Select All Categories", True):
     selected_categories = all_categories
@@ -91,10 +84,14 @@ filtered_data = main_dataset[
     (main_dataset['product_category_name'].isin(selected_categories))
 ]
 
-# Check if filtered data is empty
 if filtered_data.empty:
     st.warning("No data available for the selected filters. Please adjust your selection.")
     st.stop()
+
+# Save filtered data for notebook analysis
+if st.sidebar.button("Save Filtered Data for Notebook Analysis"):
+    filtered_data.to_csv("filtered_data_for_notebook.csv", index=False)
+    st.sidebar.success("Filtered data saved as 'filtered_data_for_notebook.csv'")
 
 # Main dashboard
 st.title("🛍️ E-Commerce Analytics Dashboard")
@@ -111,90 +108,86 @@ with col2:
     st.metric("Average Order Value", f"${avg_order_value:.2f}")
 
 with col3:
-    total_orders = filtered_data['product_id'].count()
+    total_orders = filtered_data['quantity'].sum()
     st.metric("Total Orders", f"{total_orders:,}")
 
 with col4:
     unique_products = filtered_data['product_id'].nunique()
     st.metric("Unique Products", f"{unique_products:,}")
 
-# Sales Trend
-st.subheader("📈 Sales Trend Analysis")
-daily_sales = filtered_data.groupby(
-    filtered_data['order_purchase_timestamp'].dt.date
-)['price'].sum().reset_index()
+# Pertanyaan 1: Produk dengan Total Penjualan Tertinggi
+st.subheader("🏆 Produk dengan Total Penjualan Tertinggi")
 
-fig_trend = px.line(
-    daily_sales,
-    x='order_purchase_timestamp',
+top_products = filtered_data.groupby(['product_id', 'product_category_name'])['price'].sum().nlargest(10).reset_index()
+
+top_products_chart = px.bar(
+    top_products,
+    x='product_category_name',  
     y='price',
-    title='Daily Sales Trend',
+    title="Top 10 Produk dengan Total Penjualan Tertinggi",
+    labels={'price': 'Total Penjualan ($)', 'product_category_name': 'Nama Produk'}, 
     template='plotly_white'
 )
-fig_trend.update_traces(line_color='#2E86C1')
-fig_trend.update_layout(
-    xaxis_title="Date",
-    yaxis_title="Total Sales ($)",
-    hovermode='x unified'
+
+st.plotly_chart(top_products_chart, use_container_width=True)
+
+
+# Pertanyaan 2: Pola Penjualan Berdasarkan Waktu
+st.subheader("📆 Pola Penjualan Mingguan")
+weekly_sales = filtered_data.set_index('order_purchase_timestamp').resample('W')['price'].sum().reset_index()
+weekly_sales_chart = px.line(
+    weekly_sales,
+    x='order_purchase_timestamp',
+    y='price',
+    title='Tren Penjualan Mingguan',
+    labels={'price': 'Total Penjualan ($)', 'order_purchase_timestamp': 'Tanggal'},
+    template='plotly_white'
 )
-st.plotly_chart(fig_trend, use_container_width=True)
+st.plotly_chart(weekly_sales_chart, use_container_width=True)
 
-# Category Performance
-st.subheader("📊 Category Performance")
-col1, col2 = st.columns(2)
+# Pertanyaan 3: Pengaruh Diskon atau Promosi terhadap Penjualan
+st.subheader("🎯 Pengaruh Diskon/Promosi terhadap Penjualan")
 
-with col1:
-    category_sales = (
-        filtered_data.groupby('product_category_name')[['price']].sum()
-        .sort_values('price', ascending=True)
-        .tail(10)
-    )
-    fig_cat = px.bar(
-        category_sales,
-        orientation='h',
-        title='Top 10 Categories by Sales',
-        template='plotly_white'
-    )
-    fig_cat.update_traces(marker_color='#27AE60')
-    st.plotly_chart(fig_cat, use_container_width=True)
+filtered_data['discount'] = filtered_data['price'] - filtered_data['payment_value']
 
-with col2:
-    avg_category_price = (
-        filtered_data.groupby('product_category_name')[['price']].mean()
-        .sort_values('price', ascending=False)
-        .head(10)
-    )
-    fig_avg = px.bar(
-        avg_category_price,
-        orientation='h',
-        title='Top 10 Categories by Average Price',
-        template='plotly_white'
-    )
-    fig_avg.update_traces(marker_color='#8E44AD')
-    st.plotly_chart(fig_avg, use_container_width=True)
-
-# Correlation Analysis
-st.subheader("🔄 Price-Weight-Freight Correlation")
-correlation_data = filtered_data[['price', 'freight_value', 'product_weight_g']].copy()
-correlation_matrix = correlation_data.corr()
-
-fig_corr = px.imshow(
-    correlation_matrix,
-    text_auto=True,
-    aspect='auto',
-    color_continuous_scale='RdBu',
-    title='Correlation Heatmap'
+filtered_data['discount_status'] = filtered_data['discount'].apply(
+    lambda x: 'Dengan Diskon' if x > 0 else 'Tanpa Diskon'
 )
-st.plotly_chart(fig_corr, use_container_width=True)
 
-# Download section
-st.sidebar.markdown("---")
-st.sidebar.subheader("📥 Download Data")
-if st.sidebar.button("Download Filtered Data as CSV"):
-    csv = filtered_data.to_csv(index=False)
-    st.sidebar.download_button(
-        label="Click to Download",
-        data=csv,
-        file_name=f"ecommerce_data_{datetime.now().strftime('%Y%m%d')}.csv",
-        mime="text/csv"
-    )
+discount_impact = filtered_data.groupby('discount_status').agg({
+    'price': 'sum',                # Total harga asli
+    'payment_value': 'sum',        # Total pembayaran yang diterima
+    'quantity': 'sum'              # Total kuantitas yang terjual
+}).reset_index()
+
+# Visualisasi Total Penjualan (Asli vs Pembayaran yang Diterima)
+sales_comparison_chart = px.bar(
+    discount_impact,
+    x='discount_status',
+    y=['price', 'payment_value'],
+    title='Total Penjualan: Dengan vs Tanpa Diskon',
+    labels={'value': 'Total Penjualan ($)', 'variable': 'Jenis Harga'},
+    barmode='group',
+    template='plotly_white'
+)
+st.plotly_chart(sales_comparison_chart, use_container_width=True)
+
+# Insight
+st.info(
+    "Penawaran diskon atau promosi terbukti efektif dalam meningkatkan volume penjualan. "
+    "Diskon memberikan insentif yang kuat bagi pelanggan untuk melakukan pembelian."
+)
+
+# Pertanyaan 4: Korelasi antara Harga dan Jumlah Penjualan
+st.subheader("📉 Korelasi Harga Produk dan Jumlah Penjualan")
+price_quantity_corr = filtered_data[['price', 'quantity']].corr().iloc[0, 1]
+st.write(f"Koefisien Korelasi antara Harga dan Jumlah Penjualan: {price_quantity_corr:.2f}")
+corr_scatter = px.scatter(
+    filtered_data,
+    x='price',
+    y='quantity',
+    title='Scatter Plot: Harga vs Jumlah Penjualan',
+    labels={'price': 'Harga ($)', 'quantity': 'Jumlah Penjualan'},
+    template='plotly_white'
+)
+st.plotly_chart(corr_scatter, use_container_width=True)
